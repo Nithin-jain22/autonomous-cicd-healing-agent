@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from typing import List
 
-from sandbox import SandboxExecutor
+from sandbox.executor import SandboxExecutor
 
 logger = logging.getLogger(__name__)
 
