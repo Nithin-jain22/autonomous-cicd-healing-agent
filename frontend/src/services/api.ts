@@ -1,10 +1,48 @@
 import axios from 'axios'
 import type { RunAgentRequest, RunAgentResponse, RunStatusResponse } from '../types'
 
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+
+console.log('🔌 API Configuration:')
+console.log(`   Base URL: ${API_BASE_URL}`)
+console.log(`   Environment: ${import.meta.env.MODE}`)
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8000',
+  baseURL: API_BASE_URL,
   timeout: 30000,
 })
+
+// Add response interceptor for better error handling
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (!error.response) {
+      // Network error or backend unreachable
+      const helpText = `
+        ❌ Network Error: Cannot reach backend API at ${API_BASE_URL}
+        
+        📋 Troubleshooting:
+        1. Verify VITE_API_URL environment variable is set correctly
+        2. Check if backend is running: curl ${API_BASE_URL}/health
+        3. Ensure AWS EC2 security group allows port 8000
+        4. On Vercel: Settings → Environment Variables → Set VITE_API_URL
+        
+        💻 For local development:
+        - Backend should run at http://localhost:8000
+        - Frontend should run at http://localhost:5174
+      `
+      console.error(helpText)
+      error.message = `Network Error: Backend unreachable at ${API_BASE_URL}. Check console for details.`
+    } else if (error.response?.status === 401 || error.response?.status === 403) {
+      error.message = `Authorization Error: ${error.response.data?.detail || 'Check GITHUB_TOKEN'}`
+    } else if (error.response?.status === 400) {
+      error.message = `Bad Request: ${error.response.data?.detail || 'Invalid input'}`
+    } else if (error.response?.status === 503) {
+      error.message = `Service Unavailable: ${error.response.data?.detail || 'Backend not ready. Check server configuration.'}`
+    }
+    return Promise.reject(error)
+  }
+)
 
 export async function runAgent(payload: RunAgentRequest): Promise<RunAgentResponse> {
   const { data } = await api.post<RunAgentResponse>('/run-agent', payload)

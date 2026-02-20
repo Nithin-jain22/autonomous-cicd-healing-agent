@@ -26,7 +26,8 @@ app = FastAPI(title="Autonomous CI/CD Healing Agent API", version="0.1.0")
 RETRY_LIMIT = int(os.getenv("RETRY_LIMIT", "5"))
 CORS_ORIGINS = os.getenv("CORS_ALLOW_ORIGINS", "*")
 CORS_ORIGIN_LIST = [origin.strip() for origin in CORS_ORIGINS.split(",") if origin.strip()]
-orchestrator = OrchestratorAgent(retry_limit=RETRY_LIMIT)
+orchestrator: OrchestratorAgent | None = None
+orchestrator_init_error: str | None = None
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,6 +41,21 @@ app.add_middleware(
 def _is_valid_name(value: str) -> bool:
     """Validate name for branch format - only alphanumeric and spaces."""
     return bool(re.match(r"^[a-zA-Z0-9\s]+$", value))
+
+
+def _get_orchestrator() -> OrchestratorAgent:
+    global orchestrator, orchestrator_init_error
+    if orchestrator is not None:
+        return orchestrator
+
+    try:
+        orchestrator = OrchestratorAgent(retry_limit=RETRY_LIMIT)
+        orchestrator_init_error = None
+        return orchestrator
+    except Exception as exc:
+        orchestrator_init_error = str(exc)
+        logger.error("Failed to initialize orchestrator: %s", exc)
+        raise HTTPException(status_code=503, detail=f"Backend not ready: {orchestrator_init_error}") from exc
 
 
 @app.get("/health")
@@ -58,20 +74,23 @@ def run_agent(payload: RunAgentRequest, background_tasks: BackgroundTasks) -> Ru
         raise HTTPException(status_code=400, detail="team_name contains invalid characters")
     if not _is_valid_name(payload.leader_name):
         raise HTTPException(status_code=400, detail="leader_name contains invalid characters")
+
+    instance = _get_orchestrator()
     
     try:
-        run_state = orchestrator.start_run(payload)
+        run_state = instance.start_run(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    background_tasks.add_task(orchestrator.execute_run, run_state.run_id, payload)
+    background_tasks.add_task(instance.execute_run, run_state.run_id, payload)
 
     return RunAgentResponse(run_id=run_state.run_id, status=RunStatus.RUNNING)
 
 
 @app.get("/run-status/{run_id}")
 def run_status(run_id: str) -> dict:
-    run_state = orchestrator.get_run(run_id)
+    instance = _get_orchestrator()
+    run_state = instance.get_run(run_id)
     if run_state is None:
         raise HTTPException(status_code=404, detail="run_id not found")
 
@@ -88,3 +107,4 @@ def run_status(run_id: str) -> dict:
         "started_at": run_state.started_at.isoformat(),
         "finished_at": run_state.finished_at.isoformat() if run_state.finished_at else None,
     }
+
