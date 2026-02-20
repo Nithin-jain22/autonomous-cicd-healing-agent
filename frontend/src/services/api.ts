@@ -1,11 +1,21 @@
 import axios from 'axios'
 import type { RunAgentRequest, RunAgentResponse, RunStatusResponse } from '../types'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim()
+const isProduction = import.meta.env.PROD
+const missingProductionApiUrl = isProduction && !configuredApiUrl
+const API_BASE_URL = configuredApiUrl || (isProduction ? '' : 'http://localhost:8000')
+
+const missingApiUrlMessage =
+  'VITE_API_URL is not configured for production. Set it in Vercel: Project Settings → Environment Variables → VITE_API_URL, then redeploy.'
 
 console.log('🔌 API Configuration:')
 console.log(`   Base URL: ${API_BASE_URL}`)
 console.log(`   Environment: ${import.meta.env.MODE}`)
+
+if (missingProductionApiUrl) {
+  console.error(`❌ ${missingApiUrlMessage}`)
+}
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -45,11 +55,17 @@ api.interceptors.response.use(
 )
 
 export async function runAgent(payload: RunAgentRequest): Promise<RunAgentResponse> {
+  if (missingProductionApiUrl) {
+    throw new Error(missingApiUrlMessage)
+  }
   const { data } = await api.post<RunAgentResponse>('/run-agent', payload)
   return data
 }
 
 export async function getRunStatus(runId: string): Promise<RunStatusResponse> {
+  if (missingProductionApiUrl) {
+    throw new Error(missingApiUrlMessage)
+  }
   const { data } = await api.get<RunStatusResponse>(`/run-status/${runId}`)
   return data
 }
